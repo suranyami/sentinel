@@ -1,8 +1,8 @@
 defmodule Sentinel.Mailer do
-  use Bamboo.Mailer, otp_app: :sentinel
-  use Bamboo.Phoenix, view: Sentinel.Config.views.email
+  alias Sentinel.{Config, Mailer}
 
-  alias Sentinel.Mailer
+  use Bamboo.Mailer, otp_app: Sentinel.Config.otp_app
+  use Bamboo.Phoenix, view: Config.views.email
 
   @moduledoc """
   Provides mailer base imported into mailer modules
@@ -95,6 +95,15 @@ defmodule Sentinel.Mailer do
   def send_invite_email(user, %{confirmation_token: confirmation_token, password_reset_token: password_reset_token}) do
     user
     |> Sentinel.Mailer.Invite.build(%{confirmation_token: confirmation_token, password_reset_token: password_reset_token})
+    |> Mailer.managed_deliver
+  end
+
+  @doc """
+  Thin wrapper around the Sentinel.Mailer.Unlock module
+  """
+  def send_locked_account_email(user, unlock_token) do
+    user
+    |> Sentinel.Mailer.Unlock.build(unlock_token)
     |> Mailer.managed_deliver
   end
 

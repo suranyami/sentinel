@@ -3,6 +3,9 @@ defmodule Sentinel do
   Module responsible for the macros that mount the Sentinel routes
   """
 
+  @doc """
+  Mounts Sentinel HTML and JSON auth routes inside your application
+  """
   defmacro mount_ueberauth do
     run_ueberauth_compile_time_checks()
 
@@ -11,6 +14,7 @@ defmodule Sentinel do
 
       scope "/", Sentinel.Controllers do
         get "/login", AuthController, :new
+        post "/login", AuthController, :create
         get "/logout", AuthController, :delete
       end
 
@@ -42,7 +46,7 @@ defmodule Sentinel do
   end
 
   @doc """
-  Mount's Sentinel HTML routes inside your application
+  Mounts Sentinel HTML routes inside your application
   """
   defmacro mount_html do
     quote do
@@ -52,7 +56,6 @@ defmodule Sentinel do
 
         if Sentinel.registerable? do
           get "/user/new", UserController, :new
-          post "/user", UserController, :create
         end
 
         if Sentinel.invitable? do
@@ -64,9 +67,14 @@ defmodule Sentinel do
           post "/user/confirmation_instructions", UserController, :resend_confirmation_instructions
           get "/user/confirmation", UserController, :confirm
         end
+        if Sentinel.lockable? do
+          get "/unlock", UnlockController, :new
+          post "/unlock", UnlockController, :create
+          put "/unlock", UnlockController, :update
+        end
 
         get "/password/new", PasswordController, :new
-        post "/password/new", PasswordController, :create
+        post "/password", PasswordController, :create
         get "/password/edit", PasswordController, :edit
         put "/password", PasswordController, :update
 
@@ -78,7 +86,7 @@ defmodule Sentinel do
   end
 
   @doc """
-  Mount's Sentinel JSON API routes inside your application
+  Mounts Sentinel JSON API routes inside your application
   """
   defmacro mount_api do
     run_api_compile_time_checks()
@@ -94,6 +102,10 @@ defmodule Sentinel do
         if Sentinel.confirmable? do
           post "/user/confirmation_instructions", UserController, :resend_confirmation_instructions
           get "/user/confirmation", UserController, :confirm
+        end
+        if Sentinel.lockable? do
+          post "/unlock", UnlockController, :create
+          put "/unlock", UnlockController, :update
         end
 
         get "/password/new", PasswordController, :new
@@ -121,6 +133,28 @@ defmodule Sentinel do
     end
   end
 
+  def invite(attrs) do
+    with auth                                                         <- coerce_to_auth(attrs),
+         {:ok, %{user: user, confirmation_token: confirmation_token}} <- Sentinel.Ueberauthenticator.ueberauthenticate(auth),
+         {:ok, user}                                                  <- Sentinel.AfterRegistrator.confirmable_and_invitable(user, confirmation_token),
+         {:ok, user}                                                  <- Sentinel.RegistratorHelper.callback(user),
+         ueberauth when not is_nil(ueberauth)                         <- Sentinel.Config.repo.get_by(Sentinel.Ueberauth, user_id: user.id),
+         true                                                         <- is_nil(ueberauth.hashed_password) do
+    else
+      _ -> {:error, "Unable to invite user"}
+    end
+  end
+
+  defp coerce_to_auth(attrs) do
+    %Ueberauth.Auth{
+      provider: :identity,
+      credentials: %Ueberauth.Auth.Credentials{other: %{password: nil}},
+      extra: %{
+        raw_info: attrs
+      }
+    }
+  end
+
   def invitable? do
     Sentinel.Config.invitable
   end
@@ -139,5 +173,9 @@ defmodule Sentinel do
 
   def registerable? do
     Sentinel.Config.registerable?
+  end
+
+  def lockable? do
+    Sentinel.Config.lockable?
   end
 end

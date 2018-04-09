@@ -1,8 +1,6 @@
 defmodule Sentinel.Changeset.Registrator do
   alias Ecto.Changeset
-  alias Ecto.DateTime
   alias Sentinel.Util
-  alias Sentinel.UserHelper
 
   @moduledoc """
   Handles registration changeset logic
@@ -12,34 +10,16 @@ defmodule Sentinel.Changeset.Registrator do
   Returns a changeset setting email and hashed_password on a new user.
   Validates that email and password are present and that email is unique.
   """
-  def changeset(params = %{"username" => username}) when username != "" and username != nil do
-    username_changeset(params)
-  end
-  def changeset(params = %{username: username}) when username != "" and username != nil do
-    username_changeset(params)
-  end
   def changeset(params, raw_info \\ %{}) do
     updated_params = params |> atomize_params |> downcase_email
 
     Sentinel.Config.user_model
     |> struct
-    |> UserHelper.model.changeset(updated_params)
+    |> Sentinel.Config.user_model.changeset(updated_params)
     |> Changeset.cast(updated_params, [:email])
     |> Changeset.validate_required([:email])
     |> Changeset.validate_change(:email, &Util.presence_validator/2)
     |> Changeset.unique_constraint(:email)
-    |> changeset_helper(raw_info)
-  end
-
-  defp username_changeset(params, raw_info \\ %{}) do
-    UserHelper.model
-    |> struct
-    |> UserHelper.model.changeset(params)
-    |> Changeset.cast(params, [:username])
-    |> Changeset.validate_change(:username, &Util.presence_validator/2)
-    |> Changeset.unique_constraint(:username)
-    |> Changeset.put_change(:hashed_confirmation_token, nil)
-    |> Changeset.put_change(:confirmed_at, DateTime.utc)
     |> changeset_helper(raw_info)
   end
 
@@ -60,6 +40,8 @@ defmodule Sentinel.Changeset.Registrator do
     end
   end
 
-  defp changeset_helper(changeset, %{"user" => user_info}), do: changeset_helper(changeset, user_info)
-  defp changeset_helper(changeset, user_info), do: UserHelper.validator(changeset, user_info)
+  defp changeset_helper(changeset, %{user: user_info}), do: changeset_helper(changeset, user_info)
+  defp changeset_helper(changeset, user_info) do
+      Sentinel.Helpers.InjectedChangesetHelper.apply(changeset, Sentinel.Config.user_model_validator, user_info)
+  end
 end

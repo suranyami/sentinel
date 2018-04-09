@@ -3,23 +3,20 @@ defmodule Sentinel.Ueberauthenticator do
   Common authentication logic using the ueberauth underlying layer
   """
   alias Ueberauth.Auth
-  alias Sentinel.Authenticator
-  alias Sentinel.Changeset.Registrator
-  alias Sentinel.Changeset.Confirmator
-  alias Sentinel.Config
-  alias Sentinel.Ueberauth
+  alias Sentinel.{Authenticator, Changeset.Registrator, Changeset.Confirmator, Config, Ueberauth}
 
   @unknown_error {:error, [base: {"Unknown email or password", []}]}
+  @locked_error {:error, [lockable: {"Your account is currently locked. Please follow the instructions we sent you by email to unlock it.", []}]}
 
+  def ueberauthenticate(%Auth{provider: :identity, uid: email}) when is_nil(email) or email == "" do
+    {:error, [email: {"can't be blank", []}]}
+  end
   def ueberauthenticate(auth = %Auth{provider: :identity, credentials: %Auth.Credentials{other: %{password: password}}}) when is_nil(password) or password == "" do
     if invitable?() do
       create_user_and_auth(auth)
     else
       {:error, [password: {"A password is required to login", []}]}
     end
-  end
-  def ueberauthenticate(%Auth{provider: :identity, uid: email}) when is_nil(email) or email == "" do
-    {:error, [email: {"An email is required to login", []}]}
   end
   def ueberauthenticate(%Auth{provider: :identity, uid: uid, credentials: %Auth.Credentials{other: %{password: password, password_confirmation: password_confirmation}}}) when is_nil(password_confirmation) or password_confirmation == "" do
     Config.user_model
@@ -38,34 +35,69 @@ defmodule Sentinel.Ueberauthenticator do
       authenticate(user, db_auth, password)
     end
   end
-  def ueberauthenticate(%Auth{provider: :identity, uid: uid, credentials: %Auth.Credentials{other: %{password: password, password_confirmation: password}}}) do
+  def ueberauthenticate(
+    %Auth{
+      provider: :identity,
+      uid: uid,
+      credentials: %Auth.Credentials{
+        other: %{
+          password: password,
+          password_confirmation: password
+        }
+      }
+    }) do
     Config.user_model
     |> Config.repo.get_by(email: String.downcase(uid))
     |> find_auth_and_authenticate(password)
   end
-  def ueberauthenticate(%Auth{provider: :identity, uid: _uid, credentials: %Auth.Credentials{other: %{password: _password, password_confirmation: _password_confirmation}}}) do
+  def ueberauthenticate(
+    %Auth{
+      provider: :identity,
+      uid: _uid,
+      credentials: %Auth.Credentials{
+        other: %{
+          password: _password,
+          password_confirmation: _password_confirmatio
+        }
+      }
+    }) do
     {:error, [%{password: "Password must match password confirmation"}]}
   end
-  def ueberauthenticate(%Auth{provider: :identity, uid: uid, credentials: %Auth.Credentials{other: %{password: password}}}) do
+  def ueberauthenticate(
+    %Auth{
+      provider: :identity,
+      uid: uid,
+      credentials: %Auth.Credentials{
+        other: %{
+          password: password
+        }
+      }
+    }) do
     Config.user_model
     |> Config.repo.get_by(email: String.downcase(uid))
     |> find_auth_and_authenticate(password)
   end
   def ueberauthenticate(%Auth{uid: uid} = auth_params) do
+    string_uid = coerce_to_string(uid)
+
+    updated_auth_params =
+      auth_params
+      |> Map.put(:provider, coerce_to_string(auth_params.provider))
+      |> Map.put(:uid, string_uid)
+
     auth =
       Sentinel.Ueberauth
-      |> Config.repo.get_by(uid: uid)
+      |> Config.repo.get_by(uid: string_uid)
       |> Config.repo.preload([:user])
 
     if is_nil(auth) do
-      user = Config.repo.get_by(Config.user_model, email: auth_params.info.email)
+      user = Config.repo.get_by(Config.user_model, email: updated_auth_params.info.email)
       if is_nil(user) do
-        create_user_and_auth(auth_params)
+        create_user_and_auth(updated_auth_params, string_uid)
       else
-        updated_auth = auth_params |> Map.put(:provider, Atom.to_string(auth_params.provider))
         auth_changeset =
-          %Sentinel.Ueberauth{uid: user.id, user_id: user.id}
-          |> Sentinel.Ueberauth.changeset(Map.from_struct(updated_auth))
+          %Sentinel.Ueberauth{uid: string_uid, user_id: user.id}
+          |> Sentinel.Ueberauth.changeset(Map.from_struct(updated_auth_params))
 
         case Config.repo.insert(auth_changeset) do
           {:ok, _auth} -> {:ok, user}
@@ -73,7 +105,8 @@ defmodule Sentinel.Ueberauthenticator do
         end
       end
     else
-      {:ok, auth.user}
+      auth_changeset = Sentinel.Ueberauth.changeset(auth, Map.from_struct(updated_auth_params))
+      Config.repo.update(auth_changeset)
     end
   end
 
@@ -92,44 +125,48 @@ defmodule Sentinel.Ueberauthenticator do
   defp authenticate(_user, nil, _password) do
     @unknown_error
   end
+  defp authenticate(_user, %Ueberauth{locked_at: locked_at}, _password) when locked_at != nil do
+    @locked_error
+  end
   defp authenticate(user, auth, password) do
     auth
     |> Map.put(:user, user)
     |> Authenticator.authenticate(password)
   end
 
-  defp create_user_and_auth(auth) do
-    if Config.registerable?() do
-      updated_auth = auth |> Map.put(:provider, Atom.to_string(auth.provider))
+  defp create_user_and_auth(auth, provided_uid \\ nil) do
+    if Config.registerable?() || invitable?() do
+      updated_auth = auth |> Map.put(:provider, coerce_to_string(auth.provider))
 
       Config.repo.transaction(fn ->
-        {confirmation_token, changeset} =
+        {confirmation_token, user_changeset} =
           updated_auth.info
           |> Map.from_struct
           |> Registrator.changeset(updated_auth.extra.raw_info)
           |> Confirmator.confirmation_needed_changeset
 
-        user =
-          case Config.repo.insert(changeset) do
-            {:ok, user} -> user
-            _ -> Config.repo.rollback(changeset.errors)
-          end
-
-        auth_changeset =
-          %Sentinel.Ueberauth{uid: user.id, user_id: user.id}
-          |> Sentinel.Ueberauth.changeset(Map.from_struct(updated_auth))
-
-        case Config.repo.insert(auth_changeset) do
-          {:ok, _auth} -> nil
-          _ -> Config.repo.rollback(changeset.errors)
+        with {:ok, user} <- Config.repo.insert(user_changeset),
+             uid = set_uid(provided_uid, user),
+             updated_auth = Map.merge(Map.from_struct(updated_auth), %{uid: uid, user_id: user.id}),
+             auth_changeset <- Sentinel.Ueberauth.changeset(%Sentinel.Ueberauth{}, updated_auth),
+             {:ok, _auth} <- Config.repo.insert(auth_changeset),
+             preloaded_user <- Config.repo.preload(user, :ueberauths) do
+          %{user: preloaded_user, confirmation_token: confirmation_token}
+        else
+          {:error, error_changeset} -> Config.repo.rollback(error_changeset.errors)
         end
-
-        %{user: user, confirmation_token: confirmation_token}
       end)
     else
       {:error, [base: {"New user registration is not permitted", []}]}
     end
   end
+
+  defp set_uid(nil, user), do: coerce_to_string(user.id)
+  defp set_uid(provided_uid, _user), do: coerce_to_string(provided_uid)
+
+  defp coerce_to_string(var) when is_bitstring(var), do: var
+  defp coerce_to_string(var) when is_integer(var), do: Integer.to_string(var)
+  defp coerce_to_string(var) when is_atom(var), do: Atom.to_string(var)
 
   defp invitable? do
     Config.invitable

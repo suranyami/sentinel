@@ -1,4 +1,4 @@
-defmodule GuardianDbMigrationTemplate do
+defmodule GuardianDbMigration do
   use Ecto.Migration
 
   def up do
@@ -13,6 +13,8 @@ defmodule GuardianDbMigrationTemplate do
       add :claims, :map
       timestamps()
     end
+
+    create index(:guardian_tokens, [:sub])
   end
 
   def down do

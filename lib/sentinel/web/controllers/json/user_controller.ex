@@ -4,8 +4,7 @@ defmodule Sentinel.Controllers.Json.UserController do
   """
 
   use Phoenix.Controller
-  alias Sentinel.Config
-  alias Sentinel.Util
+  alias Sentinel.{Config, Util}
 
   def resend_confirmation_instructions(conn, params) do
     Sentinel.Confirm.send_confirmation_instructions(params)
@@ -23,13 +22,13 @@ defmodule Sentinel.Controllers.Json.UserController do
   """
   def confirm(conn, params) do
     case Sentinel.Confirm.do_confirm(params) do
-      {:ok, _user} -> redirect(conn, external: Util.api_redirect_url(:confirmable))
+      {:ok, _user} -> Sentinel.RedirectHelper.api_redirect(conn, :user_confirmation)
       {:error, changeset} -> Util.send_error(conn, changeset.errors)
     end
   end
 
   def invitation_registration(conn, params) do
-    redirect(conn, external: Util.api_redirect_url(:invitable, params))
+    Sentinel.RedirectHelper.api_redirect(conn, :user_invitation, params)
   end
 
   @doc """

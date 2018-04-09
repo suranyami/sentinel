@@ -5,24 +5,7 @@ defmodule Sentinel.Util do
   import Phoenix.Controller
   import Plug.Conn
 
-  alias Sentinel.Config
   alias Sentinel.Util
-
-  def api_redirect_url(:confirmable) do
-    "#{Config.confirmable_redirect_url}"
-  end
-  def api_redirect_url(:invitable, params) do
-    "#{Config.invitation_registration_url}?#{mapped_params(params)}"
-  end
-  def api_redirect_url(:password_reset, params) do
-    "#{Config.password_reset_url}?#{mapped_params(params)}"
-  end
-  defp mapped_params(params) do
-    params
-    |> Enum.map_join("&", fn(key, value) ->
-      "#{key}=#{value}"
-    end)
-  end
 
   @doc """
   Formats errors for sending via the API
@@ -77,7 +60,6 @@ defmodule Sentinel.Util do
     |> Enum.join("&")
   end
 
-  #FIXME actually make into full struct
   def params_to_ueberauth_auth_struct(params, password_reset_token \\ nil) do
     %{
       password_reset_token: (password_reset_token || params["password_reset_token"]),

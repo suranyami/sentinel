@@ -12,7 +12,7 @@ defmodule UeberauthenticatorTest do
     end
 
     auth = Factory.insert(:ueberauth)
-    confirmed_user = Factory.insert(:user, confirmed_at: Ecto.DateTime.utc)
+    confirmed_user = Factory.insert(:user, confirmed_at: DateTime.utc_now())
     confirmed_auth = Factory.insert(:ueberauth, user: confirmed_user)
     {:ok,
       %{
@@ -25,7 +25,7 @@ defmodule UeberauthenticatorTest do
   end
 
   test "identity provider without user or passsword" do
-    assert {:error, [email: {"can't be blank", [validation: :required]}]} = Ueberauthenticator.ueberauthenticate(%Auth{
+    assert {:error, [email: {"can't be blank", []}]} = Ueberauthenticator.ueberauthenticate(%Auth{
       provider: :identity,
       credentials: %Auth.Credentials{
         other: %{
@@ -68,7 +68,7 @@ defmodule UeberauthenticatorTest do
   end
 
   test "identity provider without email", %{auth: auth} do
-    assert {:error, [email: {"An email is required to login", []}]} = Ueberauthenticator.ueberauthenticate(%Auth{
+    assert {:error, [email: {"can't be blank", []}]} = Ueberauthenticator.ueberauthenticate(%Auth{
       provider: :identity,
       credentials: %Auth.Credentials{
         other: %{
@@ -141,6 +141,7 @@ defmodule UeberauthenticatorTest do
 
   test "identity provider with password and confirmation, user DOESN'T exist, auth DOESN'T, REGISTERABLE false - doesn't create a new user" do
     Config.persist([sentinel: [registerable: :false]])
+    Config.persist([sentinel: [invitable: :false]])
 
     assert {:error, [base: {"New user registration is not permitted", []}]} = Ueberauthenticator.ueberauthenticate(%Auth{
       provider: :identity,
@@ -172,7 +173,7 @@ defmodule UeberauthenticatorTest do
   end
 
   test "authenticate a confirmed user - case insensitive" do
-    user = Factory.insert(:user, confirmed_at: Ecto.DateTime.utc)
+    user = Factory.insert(:user, confirmed_at: DateTime.utc_now())
     auth = Factory.insert(:ueberauth, user: user)
 
     assert {:ok, _user = %Sentinel.User{}} = Ueberauthenticator.ueberauthenticate(%Auth{
